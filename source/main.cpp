@@ -2,106 +2,161 @@
 #include <array>
 #include <cmath>
 #include <vector>
+
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 #include <glm/glm.hpp>
 #include <glm/gtx/rotate_vector.hpp>
 
-void SDL_Blit(SDL_Surface* surface, int x, int y, const SDL_Color& color)
-{
-    SDL_Rect rect{ x, y, 1, 1 };
-    SDL_FillRect(surface, &rect, SDL_MapRGBA(surface->format, color.r, color.g, color.b, color.a));
-}
+#include "sdl_extra.hpp"
 
-void SDL_BlitBig(SDL_Surface* surface, int x, int y, const SDL_Color& color)
-{
-    SDL_Blit(surface, x - 1, y - 1, color);
-    SDL_Blit(surface, x + 0, y - 1, color);
-    SDL_Blit(surface, x + 1, y - 1, color);
-    
-    SDL_Blit(surface, x - 1, y + 0, color);
-    SDL_Blit(surface, x + 0, y + 0, color);
-    SDL_Blit(surface, x + 1, y + 0, color);
-    
-    SDL_Blit(surface, x - 1, y + 1, color);
-    SDL_Blit(surface, x + 0, y + 1, color);
-    SDL_Blit(surface, x + 1, y + 1, color);
-}
 
-SDL_Color SDL_ReadPixel(SDL_Surface* surface, int x, int y)
+// converts an SDL_Color to a glm::vec4
+inline constexpr glm::vec4 ToVec4(const SDL_Color& color)
 {
-    int bpp = surface->format->BytesPerPixel;
-    Uint8* pixel_data = (Uint8*)surface->pixels + y * surface->pitch + x * bpp;
-    
-    Uint32 pixel = 0;
-    switch (bpp)
+    return glm::vec4
     {
-        case 1:
-            pixel = *pixel_data;
-            break;
-        
-        case 2:
-            pixel = *(Uint16*)pixel_data;
-            break;
-        
-        case 3:
-            if (SDL_BYTEORDER == SDL_BIG_ENDIAN)
-            { pixel = (pixel_data[0] << 16) | (pixel_data[1] << 8) | pixel_data[2]; }
-            else
-            { pixel = pixel_data[0] | (pixel_data[1] << 8) | (pixel_data[2] << 16); }
-            break;
-        
-        case 4:
-            pixel = *(Uint32*)pixel_data;
-            break;
-    }
-    
-    SDL_Color color;
-    SDL_GetRGBA(pixel, surface->format, &color.r, &color.g, &color.b, &color.a);
-    return color;
+        float(color.r),
+        float(color.g),
+        float(color.b),
+        float(color.a),
+    };
 }
 
-struct Vertex2D
-{
-    glm::vec2 pos;
-    SDL_Color color;
-    glm::vec2 uv;
-};
 
-struct Triangle2D
+// converts a glm::vec4 to an SDL_Color
+inline constexpr SDL_Color ToColor(const glm::vec4& color)
 {
-    std::array<Vertex2D, 3> vertices;
-};
+    return SDL_Color
+    {
+        Uint8(color.x),
+        Uint8(color.y),
+        Uint8(color.z),
+        Uint8(color.w),
+    };
+}
+
 
 struct Vertex3D
 {
-    glm::vec3 pos;
-    SDL_Color color;
+    glm::vec4 pos;
+    glm::vec4 color;
     glm::vec2 uv;
+    
+    inline constexpr Vertex3D(const glm::vec3& pos):
+        pos(pos, 1.0f),
+        color{ 255, 255, 255, 255 },
+        uv(0.0f, 0.0f)
+    {}
+    
+    inline constexpr Vertex3D(const glm::vec3& pos, const SDL_Color& color):
+        pos(pos, 1.0f),
+        color(ToVec4(color)),
+        uv(0.0f, 0.0f)
+    {}
+    
+    inline constexpr Vertex3D(const glm::vec3& pos, const glm::vec2& uv):
+        pos(pos, 1.0f),
+        color{ 255, 255, 255, 255 },
+        uv(uv)
+    {}
+    
+    inline constexpr Vertex3D(const glm::vec3& pos, const SDL_Color& color, const glm::vec2& uv):
+        pos(pos, 1.0f),
+        color(ToVec4(color)),
+        uv(uv)
+    {}
+    
+    inline constexpr Vertex3D(const glm::vec3& pos, const glm::vec4& color, const glm::vec2& uv):
+        pos(pos, 1.0f),
+        color(color),
+        uv(uv)
+    {}
+    
+    inline constexpr Vertex3D(const glm::vec4& pos, const glm::vec4& color, const glm::vec2& uv):
+        pos(pos),
+        color(color),
+        uv(uv)
+    {}
+    
+    inline constexpr Vertex3D Interp() const
+    {
+        auto w = 1 / pos.z;
+        return Vertex3D(glm::vec4(pos.x * w, pos.y * w, pos.z * w, w), color * w, uv * w);
+    }
+    
+    inline constexpr Vertex3D Restore() const
+    {
+        auto w = pos.w;
+        return Vertex3D(glm::vec4(pos.x / w, pos.y / w, pos.z / w, 1.0f), color / w, uv / w);
+    }
 };
+
 
 struct Triangle3D
 {
     std::array<Vertex3D, 3> vertices;
 };
 
+
 struct Model3D
 {
     std::vector<Triangle3D> triangles;
 };
 
+
 struct Camera3D
 {
     glm::vec3 pos;
-    float angle;
-    float fov;
+    float pitch;
+    float yaw;
 };
+
 
 struct Screen
 {
     float width;
     float height;
+    float fov;
 };
+
+
+struct Target
+{
+    SDL_Surface* surface;
+    std::vector<float> depth_buffer;
+    
+    inline Target(SDL_Surface* surface):
+        surface(surface)
+    {
+        depth_buffer.resize(surface->w * surface->h);
+        std::fill(depth_buffer.begin(), depth_buffer.end(), 1.0f);
+    }
+    
+    void Blit(int x, int y, float depth, const SDL_Color& color)
+    {
+        if (x >= 0 && x < surface->w && y >= 0 && y < surface->h)
+        {
+            auto depth_i = y * surface->w + x;
+            if (depth < depth_buffer[depth_i])
+            {
+                depth_buffer[depth_i] = depth;
+                SDL_Blit(surface, x, y, color);
+            }
+        }
+    }
+    
+    SDL_Color Read(int x, int y) const
+    {
+        return SDL_ReadPixel(surface, x, y);
+    }
+    
+    void ClearDepth()
+    {
+        std::fill(depth_buffer.begin(), depth_buffer.end(), 1.0f);
+    }
+};
+
 
 inline float Lerp(float a, float b, float p)
 {
@@ -144,34 +199,27 @@ inline glm::vec4 Lerp(const glm::vec4& a, const glm::vec4& b, float p)
     return a + p * (b - a);
 }
 
+inline Vertex3D Lerp(const Vertex3D& a, const Vertex3D& b, float p)
+{
+    return Vertex3D
+    {
+        Lerp(a.pos, b.pos, p),
+        Lerp(a.color, b.color, p),
+        Lerp(a.uv, b.uv, p),
+    };
+}
+
 inline float Clamp(float x, float a, float b)
 {
     return std::max(std::min(x, b), a);
 }
 
-inline glm::vec4 ToInterpSpace(const SDL_Color& color, float w)
+inline constexpr SDL_Color Blend(const SDL_Color& a, const SDL_Color& b)
 {
-    return glm::vec4
-    {
-        float(color.r) * w,
-        float(color.g) * w,
-        float(color.b) * w,
-        float(color.a) * w,
-    };
+    return ToColor(((ToVec4(a) / 255.0f) * (ToVec4(b) / 255.0f)) * 255.0f);
 }
 
-inline SDL_Color ColorFromInterpSpace(const glm::vec4& color, float w)
-{
-    return SDL_Color
-    {
-        Uint8(color.x / w),
-        Uint8(color.y / w),
-        Uint8(color.z / w),
-        Uint8(color.w / w),
-    };
-}
-
-SDL_Color Sample(SDL_Surface* surface, float u, float v)
+inline SDL_Color Sample(SDL_Surface* surface, float u, float v)
 {
     auto x = (int)(u * surface->w);
     auto y = (int)(v * surface->h);
@@ -184,11 +232,16 @@ SDL_Color Sample(SDL_Surface* surface, float u, float v)
 
 inline SDL_Surface* sampler = nullptr;
 
-void BlitTriangle(SDL_Surface* surface, const glm::vec2& clip, const Triangle3D& triangle)
+inline void BlitTriangle(Target& target, const glm::vec2& clip, const Triangle3D& triangle)
 {
     auto& verts = triangle.vertices;
     
+    // completely flat triangles don't get drawn
     if (verts[0].pos.y == verts[1].pos.y && verts[1].pos.y == verts[2].pos.y)
+    { return; }
+    
+    // can't draw triangles that are partially beind us yet
+    if (verts[0].pos.z <= 0.0f || verts[1].pos.z <= 0.0f || verts[2].pos.z <= 0.0f)
     { return; }
     
     if (verts[0].pos.y != verts[1].pos.y && verts[1].pos.y != verts[2].pos.y && verts[2].pos.y != verts[0].pos.y)
@@ -208,34 +261,17 @@ void BlitTriangle(SDL_Surface* surface, const glm::vec2& clip, const Triangle3D&
         if (vert2->pos.y < vert1->pos.y)
         { std::swap(vert1, vert2); }
         
-        // prepare to interpolate vertices in world space
-        auto w1 = 1 / vert1->pos.z;
-        auto w2 = 1 / vert2->pos.z;
-        auto w3 = 1 / vert3->pos.z;
-        
-        auto color1 = ToInterpSpace(vert1->color, w1);
-        auto color3 = ToInterpSpace(vert3->color, w3);
-        
-        auto uv1 = vert1->uv * w1;
-        auto uv3 = vert3->uv * w3;
-        
         // find extra vertex
         auto p = InvLerp(vert2->pos.y, vert1->pos.y, vert3->pos.y);
-        auto wx = Lerp(w1, w3, p);
+        auto vert4 = Lerp(vert1->Interp(), vert3->Interp(), p).Restore();
         
-        Vertex3D x_vert
-        {
-            Lerp(vert1->pos, vert3->pos, p),
-            ColorFromInterpSpace(Lerp(color1, color3, p), wx),
-            Lerp(uv1, uv3, p) / wx,
-        };
-        
-        x_vert.pos.y = vert2->pos.y;
-        x_vert.pos.z = Lerp(vert1->pos.z * w1, vert3->pos.z * w3, p) / wx;
+        // adjust vertex x and y to be in screen space again
+        vert4.pos.x = Lerp(vert1->pos.x, vert3->pos.x, p);
+        vert4.pos.y = vert2->pos.y;
         
         // draw top and bottom triangles
-        BlitTriangle(surface, clip, { *vert1, *vert2, x_vert });
-        BlitTriangle(surface, clip, { *vert3, *vert2, x_vert });
+        BlitTriangle(target, clip, { *vert1, *vert2, vert4 });
+        BlitTriangle(target, clip, { *vert3, *vert2, vert4 });
     }
     else if (verts[0].pos.y != verts[1].pos.y && verts[1].pos.y == verts[2].pos.y)
     {
@@ -244,7 +280,10 @@ void BlitTriangle(SDL_Surface* surface, const glm::vec2& clip, const Triangle3D&
         auto height = std::abs(y2 - y1);
         auto remain = height - std::floor(height);
         
+        // get top vertex (slight misnomer; can also be single bottom vertex)
         const Vertex3D* t_vert = &verts[0];
+        
+        // find leftmost and rightmost vertices
         const Vertex3D* l_vert;
         const Vertex3D* r_vert;
         
@@ -259,56 +298,56 @@ void BlitTriangle(SDL_Surface* surface, const glm::vec2& clip, const Triangle3D&
             r_vert = &verts[1];
         }
         
-        auto wt = 1 / t_vert->pos.z;
-        auto wl = 1 / l_vert->pos.z;
-        auto wr = 1 / r_vert->pos.z;
+        // get interpolation-ready vertices
+        auto t_vert_i = t_vert->Interp();
+        auto l_vert_i = l_vert->Interp();
+        auto r_vert_i = r_vert->Interp();
         
-        auto t_color = ToInterpSpace(t_vert->color, wt);
-        auto l_color = ToInterpSpace(l_vert->color, wl);
-        auto r_color = ToInterpSpace(r_vert->color, wr);
-        
-        auto t_uv = t_vert->uv * wt;
-        auto l_uv = l_vert->uv * wl;
-        auto r_uv = r_vert->uv * wr;
-        
-        float ct;
-        float cb;
+        // determine vertical clipping
+        float t_clip;
+        float b_clip;
         
         if (y1 < y2)
         {
-            ct = Remap(1.0f, y1, y2, 0.0f, height);
-            cb = Remap(clip.y - 1.0f, y1, y2, 0.0f, height);
+            t_clip = Remap(1.0f, y1, y2, 0.0f, height);
+            b_clip = Remap(clip.y - 1.0f, y1, y2, 0.0f, height);
         }
         else
         {
-            ct = Remap(clip.y - 1.0f, y1, y2, 0.0f, height);
-            cb = Remap(1.0f, y1, y2, 0.0f, height);
+            t_clip = Remap(clip.y - 1.0f, y1, y2, 0.0f, height);
+            b_clip = Remap(1.0f, y1, y2, 0.0f, height);
         }
         
-        for (float y = std::max(0.0f, ct) + remain; y <= std::min(height, cb); y += 1.0f)
+        // draw pixels
+        for (float y = std::max(0.0f, t_clip) + remain; y <= std::min(height, b_clip); y += 1.0f)
         {
+            // find edges of current row
             auto x1 = Remap(y, 0.0f, height, t_vert->pos.x, l_vert->pos.x);
             auto x2 = Remap(y, 0.0f, height, t_vert->pos.x, r_vert->pos.x);
             
-            for (float x = std::max(1.0f, x1); x <= std::min(clip.x - 1.0f, x2); x += 1.0f)
+            // draw current row
+            for (float x = std::max(0.0f, x1); x <= std::min(clip.x, x2); x += 1.0f)
             {
+                // find progress across x and y axes
                 auto xp = InvLerp(x, x1, x2);
                 auto yp = InvLerp(y, 0.0, height);
                 
-                auto w = Lerp(wt, Lerp(wl, wr, xp), yp);
-                auto lerp_color = Lerp(t_color, Lerp(l_color, r_color, xp), yp);
-                auto lerp_uv = Lerp(t_uv, Lerp(l_uv, r_uv, xp), yp);
+                // interpolate vertices in 2D
+                auto vertex = Lerp(t_vert_i, Lerp(l_vert_i, r_vert_i, xp), yp).Restore();
                 
-                auto color = ColorFromInterpSpace(lerp_color, w);
-                auto uv = lerp_uv / w;
+                // determine color
+                SDL_Color color = ToColor(vertex.color);
                 
+                // blend sample color
                 if (sampler != nullptr)
-                { color = Sample(sampler, uv.x, uv.y); }
+                { color = Blend(color, Sample(sampler, vertex.uv.x, vertex.uv.y)); }
                 
+                // determine position at which to draw our pixel
                 auto yy = (int)(Lerp(y1, y2, yp));
                 auto xx = (int)(x);
                 
-                SDL_Blit(surface, xx, yy, color);
+                // blit the pixel
+                target.Blit(xx, yy, vertex.pos.z / 10000.0f, color);
             }
         }
     }
@@ -316,57 +355,54 @@ void BlitTriangle(SDL_Surface* surface, const glm::vec2& clip, const Triangle3D&
     {
         if (verts[0].pos.y == verts[1].pos.y)
         {
-            BlitTriangle(surface, clip, { verts[2], verts[0], verts[1] });
+            BlitTriangle(target, clip, { verts[2], verts[0], verts[1] });
         }
         else // if (verts[0].pos.y == verts[2].pos.y)
         {
-            BlitTriangle(surface, clip, { verts[1], verts[2], verts[0] });
+            BlitTriangle(target, clip, { verts[1], verts[2], verts[0] });
         }
     }
 }
 
-glm::vec3 Scale3D(const glm::vec3& pos, const Screen& screen)
+inline glm::vec3 Scale3D(const glm::vec3& pos, const Screen& screen)
 {
     auto diff = screen.width - screen.height;
+    auto fov_factor = screen.fov / 90.0f;
     
     return glm::vec3
     {
-        Remap(pos.x / pos.z, -1.0, 1.0, diff / 2.0f, screen.height + diff / 2.0f),
-        Remap(pos.y / pos.z, -1.0, 1.0, 0.0f, screen.height),
+        Remap(pos.x / (pos.z * fov_factor), -1.0, 1.0, diff / 2.0f, screen.height + diff / 2.0f),
+        Remap(pos.y / (pos.z * fov_factor), -1.0, 1.0, 0.0f, screen.height),
         pos.z
     };
 }
 
-void BlitTriangle3D(SDL_Surface* surface, const Screen& screen, const Triangle3D& triangle)
+inline void BlitTriangle3D(Target& target, const Screen& screen, const Triangle3D& triangle)
 {
     auto& verts = triangle.vertices;
     
-    // can't draw triangles that are partially beind us yet
-    if (verts[0].pos.z <= 0.0f || verts[1].pos.z <= 0.0f || verts[2].pos.z <= 0.0f)
-    { return; }
-    
-    BlitTriangle(surface, { screen.width, screen.height }, Triangle3D{
+    BlitTriangle(target, { screen.width, screen.height }, Triangle3D{
         Vertex3D{ Scale3D(verts[0].pos, screen), verts[0].color, verts[0].uv },
         Vertex3D{ Scale3D(verts[1].pos, screen), verts[1].color, verts[1].uv },
         Vertex3D{ Scale3D(verts[2].pos, screen), verts[2].color, verts[2].uv },
     });
 }
 
-void BlitTriangle3D(SDL_Surface* surface, const Camera3D& camera, const Screen& screen, const Triangle3D& triangle)
+inline void BlitTriangle3D(Target& target, const Camera3D& camera, const Screen& screen, const Triangle3D& triangle)
 {
     auto& verts = triangle.vertices;
     
-    BlitTriangle3D(surface, screen, Triangle3D{
-        Vertex3D{ glm::rotateY(verts[0].pos - camera.pos, glm::radians(camera.angle)), verts[0].color, verts[0].uv },
-        Vertex3D{ glm::rotateY(verts[1].pos - camera.pos, glm::radians(camera.angle)), verts[1].color, verts[1].uv },
-        Vertex3D{ glm::rotateY(verts[2].pos - camera.pos, glm::radians(camera.angle)), verts[2].color, verts[2].uv },
+    BlitTriangle3D(target, screen, Triangle3D{
+        Vertex3D{ glm::rotateX(glm::rotateY(glm::vec3(verts[0].pos) - camera.pos, glm::radians(camera.pitch)), glm::radians(camera.yaw)), verts[0].color, verts[0].uv },
+        Vertex3D{ glm::rotateX(glm::rotateY(glm::vec3(verts[1].pos) - camera.pos, glm::radians(camera.pitch)), glm::radians(camera.yaw)), verts[1].color, verts[1].uv },
+        Vertex3D{ glm::rotateX(glm::rotateY(glm::vec3(verts[2].pos) - camera.pos, glm::radians(camera.pitch)), glm::radians(camera.yaw)), verts[2].color, verts[2].uv },
     });
 }
 
-void BlitModel3D(SDL_Surface* surface, const Camera3D& camera, const Screen& screen, const Model3D& model)
+inline void BlitModel3D(Target& target, const Camera3D& camera, const Screen& screen, const Model3D& model)
 {
     for (auto& triangle: model.triangles)
-    { BlitTriangle3D(surface, camera, screen, triangle); }
+    { BlitTriangle3D(target, camera, screen, triangle); }
 }
 
 int main(int, char**)
@@ -376,7 +412,7 @@ int main(int, char**)
     IMG_Init(IMG_INIT_PNG);
     
     // create window and renderer
-    SDL_Window* window = SDL_CreateWindow("SmolSoft3D", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 600, 400, SDL_WINDOW_HIDDEN);
+    SDL_Window* window = SDL_CreateWindow("SmolSoft3D", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 600 * 2, 400 * 2, SDL_WINDOW_HIDDEN);
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC);
     
     // prevent window from appearing white for a split second at startup
@@ -386,13 +422,15 @@ int main(int, char**)
     // create surface and its texture
     SDL_Surface* surface = SDL_CreateRGBSurfaceWithFormat(0, 600, 400, 32, SDL_PIXELFORMAT_BGRA32);
     SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+    Target target = surface;
     
+    // load image to sample
     SDL_Surface* goober = IMG_Load("./assets/goober.png");
-    // goober = SDL_ConvertSurface(surface, surface->format, 0);
     
     // camera
-    Screen screen{ 600.0f, 400.0f };
-    Camera3D camera{ glm::vec3(0, -0.5, 0), 0.0f, 45.0f };
+    Screen screen{ 600.0f, 400.0f, 60.0f };
+    Camera3D camera{ glm::vec3(0, -0.5, 0), 0.0f, 0.0f };
+    float sensitivity = 0.2f;
     
     // main loop
     for (bool running = true; running;)
@@ -405,6 +443,30 @@ int main(int, char**)
                 case SDL_QUIT:
                     running = false;
                     break;
+                
+                case SDL_MOUSEMOTION:
+                    if (SDL_GetRelativeMouseMode())
+                    {
+                        camera.pitch -= sensitivity * (float)event.motion.xrel;
+                        camera.yaw   += sensitivity * (float)event.motion.yrel;
+                    }
+                    break;
+                
+                case SDL_MOUSEBUTTONDOWN:
+                    if (event.button.button == SDL_BUTTON_LEFT)
+                    {
+                        SDL_SetRelativeMouseMode(SDL_TRUE);
+                        SDL_ShowCursor(SDL_FALSE);
+                    }
+                    break;
+                
+                case SDL_KEYDOWN:
+                    if (event.key.keysym.sym == SDLK_ESCAPE)
+                    {
+                        SDL_SetRelativeMouseMode(SDL_FALSE);
+                        SDL_ShowCursor(SDL_TRUE);
+                    }
+                    break;
             }
         }
         
@@ -414,32 +476,38 @@ int main(int, char**)
         bool down   = keys[SDL_GetScancodeFromKey(SDLK_s)];
         bool left   = keys[SDL_GetScancodeFromKey(SDLK_a)];
         bool right  = keys[SDL_GetScancodeFromKey(SDLK_d)];
+        bool tup    = keys[SDL_GetScancodeFromKey(SDLK_UP)];
+        bool tdown  = keys[SDL_GetScancodeFromKey(SDLK_DOWN)];
         bool tleft  = keys[SDL_GetScancodeFromKey(SDLK_LEFT)];
         bool tright = keys[SDL_GetScancodeFromKey(SDLK_RIGHT)];
         
-        camera.angle += 1.5f * ((tleft ? 1.0f : 0.0f) - (tright ? 1.0f : 0.0f));
+        camera.pitch += 1.5f * ((tleft ? 1.0f : 0.0f) - (tright ? 1.0f : 0.0f));
+        camera.yaw += 1.5f * ((tdown ? 1.0f : 0.0f) - (tup ? 1.0f : 0.0f));
+        
+        camera.yaw = Clamp(camera.yaw, -89.9f, 89.9f);
         
         auto movement = glm::vec3((right ? 1.0f : 0.0f) - (left ? 1.0f : 0.0f), 0.0f, (up ? 1.0f : 0.0f) - (down ? 1.0f : 0.0f));
-        camera.pos += glm::rotateY(0.02f * movement, -glm::radians(camera.angle));
+        camera.pos += glm::rotateY(0.02f * movement, -glm::radians(camera.pitch));
         
         // do rendering stuff
         SDL_RenderClear(renderer);
         SDL_FillRect(surface, nullptr, SDL_MapRGBA(surface->format, 0, 0, 0, 255));
+        target.ClearDepth();
         
         Model3D floor_model
         {
             {
                 Triangle3D
                 {
-                    Vertex3D{ glm::vec3( 1.0f, 1.0f, 2.0f), SDL_Color{ 64, 64, 64, 255 }, glm::vec2(1, 1) },
-                    Vertex3D{ glm::vec3(-1.0f, 1.0f, 2.0f), SDL_Color{ 64, 64, 64, 255 }, glm::vec2(0, 1) },
+                    Vertex3D{ glm::vec3( 1.0f, 1.0f, 2.0f), SDL_Color{ 255, 255, 255, 255 }, glm::vec2(1, 1) },
+                    Vertex3D{ glm::vec3(-1.0f, 1.0f, 2.0f), SDL_Color{ 255, 255, 255, 255 }, glm::vec2(0, 1) },
                     Vertex3D{ glm::vec3(-1.0f, 1.0f, 4.0f), SDL_Color{ 64, 64, 64, 255 }, glm::vec2(0, 0) },
                 },
                 Triangle3D
                 {
                     Vertex3D{ glm::vec3(-1.0f, 1.0f, 4.0f), SDL_Color{ 64, 64, 64, 255 }, glm::vec2(0, 0) },
                     Vertex3D{ glm::vec3( 1.0f, 1.0f, 4.0f), SDL_Color{ 64, 64, 64, 255 }, glm::vec2(1, 0) },
-                    Vertex3D{ glm::vec3( 1.0f, 1.0f, 2.0f), SDL_Color{ 64, 64, 64, 255 }, glm::vec2(1, 1) },
+                    Vertex3D{ glm::vec3( 1.0f, 1.0f, 2.0f), SDL_Color{ 255, 255, 255, 255 }, glm::vec2(1, 1) },
                 }
             }
         };
@@ -456,11 +524,24 @@ int main(int, char**)
             }
         };
         
+        Model3D spike_model
+        {
+            {
+                Triangle3D
+                {
+                    Vertex3D{ glm::vec3( 0.0f, -1.0f, 3.0f), SDL_Color{ 128, 128, 128, 255 } },
+                    Vertex3D{ glm::vec3(-0.5f,  2.0f, 3.0f), SDL_Color{ 128, 128, 128, 255 } },
+                    Vertex3D{ glm::vec3( 0.5f,  2.0f, 3.0f), SDL_Color{ 128, 128, 128, 255 } },
+                }
+            }
+        };
+        
         sampler = goober;
-        BlitModel3D(surface, camera, screen, floor_model);
+        BlitModel3D(target, camera, screen, floor_model);
         
         sampler = nullptr;
-        BlitModel3D(surface, camera, screen, triangle_model);
+        BlitModel3D(target, camera, screen, triangle_model);
+        BlitModel3D(target, camera, screen, spike_model);
         
         SDL_UpdateTexture(texture, nullptr, surface->pixels, surface->pitch);
         SDL_RenderCopy(renderer, texture, nullptr, nullptr);
