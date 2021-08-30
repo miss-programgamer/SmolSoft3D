@@ -96,6 +96,19 @@ struct Vertex3D
 struct Triangle3D
 {
     std::array<Vertex3D, 3> vertices;
+    
+    inline int GetWindingOrder() const
+    {
+        auto pos0 = glm::vec2(vertices[0].pos);
+        auto pos1 = glm::vec2(vertices[1].pos);
+        auto pos2 = glm::vec2(vertices[2].pos);
+        
+        auto side01 = pos1 - pos0;
+        auto side02 = pos2 - pos0;
+        auto normal = glm::vec2(side01.y, -side01.x);
+        
+        return (int)glm::sign(glm::dot(normal, side02));
+    }
 };
 
 
@@ -240,7 +253,11 @@ inline void BlitTriangle(Target& target, const glm::vec2& clip, const Triangle3D
     if (verts[0].pos.y == verts[1].pos.y && verts[1].pos.y == verts[2].pos.y)
     { return; }
     
-    // can't draw triangles that are partially beind us yet
+    // ignore triangles with a clockwise winding order
+    if (triangle.GetWindingOrder() != -1)
+    { return; }
+    
+    // can't draw triangles that are partially beind us (should never happen in practice)
     if (verts[0].pos.z <= 0.0f || verts[1].pos.z <= 0.0f || verts[2].pos.z <= 0.0f)
     { return; }
     
@@ -270,15 +287,23 @@ inline void BlitTriangle(Target& target, const glm::vec2& clip, const Triangle3D
         vert4.pos.y = vert2->pos.y;
         
         // draw top and bottom triangles
-        BlitTriangle(target, clip, { *vert1, *vert2, vert4 });
-        BlitTriangle(target, clip, { *vert3, *vert2, vert4 });
+        if (auto order = Triangle3D{ *vert1, *vert2, *vert3 }.GetWindingOrder(); order == -1)
+        {
+            BlitTriangle(target, clip, { *vert1, *vert2, vert4 });
+            BlitTriangle(target, clip, { *vert2, *vert3, vert4 });
+        }
+        else if (order == 1)
+        {
+            BlitTriangle(target, clip, { *vert2, *vert1, vert4 });
+            BlitTriangle(target, clip, { *vert3, *vert2, vert4 });
+        }
     }
     else if (verts[0].pos.y != verts[1].pos.y && verts[1].pos.y == verts[2].pos.y)
     {
+        // find height
         auto y1 = verts[0].pos.y;
         auto y2 = verts[1].pos.y;
-        auto height = std::abs(y2 - y1);
-        auto remain = height - std::floor(height);
+        auto height = std::abs(std::round(y2) - std::round(y1));
         
         // get top vertex (slight misnomer; can also be single bottom vertex)
         const Vertex3D* t_vert = &verts[0];
@@ -309,24 +334,24 @@ inline void BlitTriangle(Target& target, const glm::vec2& clip, const Triangle3D
         
         if (y1 < y2)
         {
-            t_clip = Remap(1.0f, y1, y2, 0.0f, height);
-            b_clip = Remap(clip.y - 1.0f, y1, y2, 0.0f, height);
+            t_clip = std::round(Remap(0.0f,   y1, y2, 0.0f, height)) + 0.5f;
+            b_clip = std::round(Remap(clip.y, y1, y2, 0.0f, height)) - 0.5f;
         }
         else
         {
-            t_clip = Remap(clip.y - 1.0f, y1, y2, 0.0f, height);
-            b_clip = Remap(1.0f, y1, y2, 0.0f, height);
+            t_clip = std::round(Remap(clip.y, y1, y2, 0.0f, height)) + 0.5f;
+            b_clip = std::round(Remap(0.0f,   y1, y2, 0.0f, height)) - 0.5f;
         }
         
         // draw pixels
-        for (float y = std::max(0.0f, t_clip) + remain; y <= std::min(height, b_clip); y += 1.0f)
+        for (float y = std::max(0.5f, t_clip); y <= std::min(height, b_clip); y += 1.0f)
         {
             // find edges of current row
-            auto x1 = Remap(y, 0.0f, height, t_vert->pos.x, l_vert->pos.x);
-            auto x2 = Remap(y, 0.0f, height, t_vert->pos.x, r_vert->pos.x);
+            auto x1 = std::round(Remap(y, 0.0f, height, t_vert->pos.x, l_vert->pos.x));
+            auto x2 = std::round(Remap(y, 0.0f, height, t_vert->pos.x, r_vert->pos.x));
             
             // draw current row
-            for (float x = std::max(0.0f, x1); x <= std::min(clip.x, x2); x += 1.0f)
+            for (float x = std::max(x1, 0.5f); x <= std::min(x2, clip.x - 0.5f); x += 1.0f)
             {
                 // find progress across x and y axes
                 auto xp = InvLerp(x, x1, x2);
@@ -372,12 +397,12 @@ inline glm::vec3 Scale3D(const glm::vec3& pos, const Screen& screen)
     return glm::vec3
     {
         Remap(pos.x / (pos.z * fov_factor), -1.0, 1.0, diff / 2.0f, screen.height + diff / 2.0f),
-        Remap(pos.y / (pos.z * fov_factor), -1.0, 1.0, 0.0f, screen.height),
+        Remap(pos.y / (pos.z * fov_factor), -1.0, 1.0, screen.height, 0.0f),
         pos.z
     };
 }
 
-inline void BlitTriangle3D(Target& target, const Screen& screen, const Triangle3D& triangle)
+inline void BlitTriangleScaled(Target& target, const Screen& screen, const Triangle3D& triangle)
 {
     auto& verts = triangle.vertices;
     
@@ -388,21 +413,87 @@ inline void BlitTriangle3D(Target& target, const Screen& screen, const Triangle3
     });
 }
 
-inline void BlitTriangle3D(Target& target, const Camera3D& camera, const Screen& screen, const Triangle3D& triangle)
+inline void BlitTriangleClip(Target& target, const Screen& screen, const Triangle3D& triangle)
 {
     auto& verts = triangle.vertices;
     
-    BlitTriangle3D(target, screen, Triangle3D{
+    float clip_plane = 0.5f;
+    bool vert0_clip = verts[0].pos.z < clip_plane;
+    bool vert1_clip = verts[1].pos.z < clip_plane;
+    bool vert2_clip = verts[2].pos.z < clip_plane;
+    
+    if (vert0_clip && vert1_clip && vert2_clip)
+    { return; }
+    
+    if (vert0_clip && !vert1_clip && !vert2_clip)
+    {
+        auto to_vert1 = Lerp(verts[0], verts[1], InvLerp(clip_plane, verts[0].pos.z, verts[1].pos.z));
+        auto to_vert2 = Lerp(verts[0], verts[2], InvLerp(clip_plane, verts[0].pos.z, verts[2].pos.z));
+        auto mid_vert = Lerp(verts[1], verts[2], 0.5f);
+        
+        BlitTriangleScaled(target, screen, Triangle3D{ to_vert1, verts[1], mid_vert });
+        BlitTriangleScaled(target, screen, Triangle3D{ to_vert2, to_vert1, mid_vert });
+        BlitTriangleScaled(target, screen, Triangle3D{ to_vert2, mid_vert, verts[2] });
+    }
+    else if (!vert0_clip && vert1_clip && !vert2_clip)
+    {
+        auto to_vert0 = Lerp(verts[1], verts[0], InvLerp(clip_plane, verts[1].pos.z, verts[0].pos.z));
+        auto to_vert2 = Lerp(verts[1], verts[2], InvLerp(clip_plane, verts[1].pos.z, verts[2].pos.z));
+        auto mid_vert = Lerp(verts[0], verts[2], 0.5f);
+        
+        BlitTriangleScaled(target, screen, Triangle3D{ to_vert0, mid_vert, verts[0] });
+        BlitTriangleScaled(target, screen, Triangle3D{ to_vert2, mid_vert, to_vert0 });
+        BlitTriangleScaled(target, screen, Triangle3D{ to_vert2, verts[2], mid_vert });
+    }
+    else if (!vert0_clip && !vert1_clip && vert2_clip)
+    {
+        auto to_vert0 = Lerp(verts[2], verts[0], InvLerp(clip_plane, verts[2].pos.z, verts[0].pos.z));
+        auto to_vert1 = Lerp(verts[2], verts[1], InvLerp(clip_plane, verts[2].pos.z, verts[1].pos.z));
+        auto mid_vert = Lerp(verts[0], verts[1], 0.5f);
+        
+        BlitTriangleScaled(target, screen, Triangle3D{ to_vert0, verts[0], mid_vert });
+        BlitTriangleScaled(target, screen, Triangle3D{ to_vert1, to_vert0, mid_vert });
+        BlitTriangleScaled(target, screen, Triangle3D{ to_vert1, mid_vert, verts[1] });
+    }
+    else if (!vert0_clip && vert1_clip && vert2_clip)
+    {
+        auto to_vert1 = Lerp(verts[0], verts[1], InvLerp(clip_plane, verts[0].pos.z, verts[1].pos.z));
+        auto to_vert2 = Lerp(verts[0], verts[2], InvLerp(clip_plane, verts[0].pos.z, verts[2].pos.z));
+        BlitTriangleScaled(target, screen, Triangle3D{ verts[0], to_vert1, to_vert2 });
+    }
+    else if (vert0_clip && !vert1_clip && vert2_clip)
+    {
+        auto to_vert0 = Lerp(verts[1], verts[0], InvLerp(clip_plane, verts[1].pos.z, verts[0].pos.z));
+        auto to_vert2 = Lerp(verts[1], verts[2], InvLerp(clip_plane, verts[1].pos.z, verts[2].pos.z));
+        BlitTriangleScaled(target, screen, Triangle3D{ verts[1], to_vert2, to_vert0 });
+    }
+    else if (vert0_clip && vert1_clip && !vert2_clip)
+    {
+        auto to_vert0 = Lerp(verts[2], verts[0], InvLerp(clip_plane, verts[2].pos.z, verts[0].pos.z));
+        auto to_vert1 = Lerp(verts[2], verts[1], InvLerp(clip_plane, verts[2].pos.z, verts[1].pos.z));
+        BlitTriangleScaled(target, screen, Triangle3D{ verts[2], to_vert0, to_vert1 });
+    }
+    else
+    {
+        BlitTriangleScaled(target, screen, triangle);
+    }
+}
+
+inline void BlitTriangleTransform(Target& target, const Camera3D& camera, const Screen& screen, const Triangle3D& triangle)
+{
+    auto& verts = triangle.vertices;
+    
+    BlitTriangleClip(target, screen, Triangle3D{
         Vertex3D{ glm::rotateX(glm::rotateY(glm::vec3(verts[0].pos) - camera.pos, glm::radians(camera.pitch)), glm::radians(camera.yaw)), verts[0].color, verts[0].uv },
         Vertex3D{ glm::rotateX(glm::rotateY(glm::vec3(verts[1].pos) - camera.pos, glm::radians(camera.pitch)), glm::radians(camera.yaw)), verts[1].color, verts[1].uv },
         Vertex3D{ glm::rotateX(glm::rotateY(glm::vec3(verts[2].pos) - camera.pos, glm::radians(camera.pitch)), glm::radians(camera.yaw)), verts[2].color, verts[2].uv },
     });
 }
 
-inline void BlitModel3D(Target& target, const Camera3D& camera, const Screen& screen, const Model3D& model)
+inline void BlitModel(Target& target, const Camera3D& camera, const Screen& screen, const Model3D& model)
 {
     for (auto& triangle: model.triangles)
-    { BlitTriangle3D(target, camera, screen, triangle); }
+    { BlitTriangleTransform(target, camera, screen, triangle); }
 }
 
 int main(int, char**)
@@ -429,7 +520,7 @@ int main(int, char**)
     
     // camera
     Screen screen{ 600.0f, 400.0f, 60.0f };
-    Camera3D camera{ glm::vec3(0, -0.5, 0), 0.0f, 0.0f };
+    Camera3D camera{ glm::vec3(0, 0.5, 0), 0.0f, 0.0f };
     float sensitivity = 0.2f;
     
     // main loop
@@ -448,7 +539,7 @@ int main(int, char**)
                     if (SDL_GetRelativeMouseMode())
                     {
                         camera.pitch -= sensitivity * (float)event.motion.xrel;
-                        camera.yaw   += sensitivity * (float)event.motion.yrel;
+                        camera.yaw   -= sensitivity * (float)event.motion.yrel;
                     }
                     break;
                 
@@ -482,7 +573,7 @@ int main(int, char**)
         bool tright = keys[SDL_GetScancodeFromKey(SDLK_RIGHT)];
         
         camera.pitch += 1.5f * ((tleft ? 1.0f : 0.0f) - (tright ? 1.0f : 0.0f));
-        camera.yaw += 1.5f * ((tdown ? 1.0f : 0.0f) - (tup ? 1.0f : 0.0f));
+        camera.yaw += 1.5f * ((tup ? 1.0f : 0.0f) - (tdown ? 1.0f : 0.0f));
         
         camera.yaw = Clamp(camera.yaw, -89.9f, 89.9f);
         
@@ -499,15 +590,15 @@ int main(int, char**)
             {
                 Triangle3D
                 {
-                    Vertex3D{ glm::vec3( 1.0f, 1.0f, 2.0f), SDL_Color{ 255, 255, 255, 255 }, glm::vec2(1, 1) },
-                    Vertex3D{ glm::vec3(-1.0f, 1.0f, 2.0f), SDL_Color{ 255, 255, 255, 255 }, glm::vec2(0, 1) },
-                    Vertex3D{ glm::vec3(-1.0f, 1.0f, 4.0f), SDL_Color{ 64, 64, 64, 255 }, glm::vec2(0, 0) },
+                    Vertex3D{ glm::vec3( 1.0f, -1.0f, 2.0f), SDL_Color{ 255, 255, 255, 255 }, glm::vec2(1, 1) },
+                    Vertex3D{ glm::vec3(-1.0f, -1.0f, 2.0f), SDL_Color{ 255, 255, 255, 255 }, glm::vec2(0, 1) },
+                    Vertex3D{ glm::vec3(-1.0f, -1.0f, 4.0f), SDL_Color{ 64, 64, 64, 255 }, glm::vec2(0, 0) },
                 },
                 Triangle3D
                 {
-                    Vertex3D{ glm::vec3(-1.0f, 1.0f, 4.0f), SDL_Color{ 64, 64, 64, 255 }, glm::vec2(0, 0) },
-                    Vertex3D{ glm::vec3( 1.0f, 1.0f, 4.0f), SDL_Color{ 64, 64, 64, 255 }, glm::vec2(1, 0) },
-                    Vertex3D{ glm::vec3( 1.0f, 1.0f, 2.0f), SDL_Color{ 255, 255, 255, 255 }, glm::vec2(1, 1) },
+                    Vertex3D{ glm::vec3(-1.0f, -1.0f, 4.0f), SDL_Color{ 64, 64, 64, 255 }, glm::vec2(0, 0) },
+                    Vertex3D{ glm::vec3( 1.0f, -1.0f, 4.0f), SDL_Color{ 64, 64, 64, 255 }, glm::vec2(1, 0) },
+                    Vertex3D{ glm::vec3( 1.0f, -1.0f, 2.0f), SDL_Color{ 255, 255, 255, 255 }, glm::vec2(1, 1) },
                 }
             }
         };
@@ -517,9 +608,9 @@ int main(int, char**)
             {
                 Triangle3D
                 {
-                    Vertex3D{ glm::vec3( 0.0f, -1.0f, 6.0f), SDL_Color{ 255, 0, 0, 255 } },
-                    Vertex3D{ glm::vec3(-1.0f,  1.0f, 5.0f), SDL_Color{ 0, 255, 0, 255 } },
-                    Vertex3D{ glm::vec3( 1.0f,  1.0f, 7.0f), SDL_Color{ 0, 0, 255, 255 } },
+                    Vertex3D{ glm::vec3( 1.0f, -1.0f, 7.0f), SDL_Color{ 0, 0, 255, 255 } },
+                    Vertex3D{ glm::vec3(-1.0f, -1.0f, 5.0f), SDL_Color{ 0, 255, 0, 255 } },
+                    Vertex3D{ glm::vec3( 0.0f,  1.0f, 6.0f), SDL_Color{ 255, 0, 0, 255 } },
                 }
             }
         };
@@ -529,19 +620,22 @@ int main(int, char**)
             {
                 Triangle3D
                 {
-                    Vertex3D{ glm::vec3( 0.0f, -1.0f, 3.0f), SDL_Color{ 128, 128, 128, 255 } },
-                    Vertex3D{ glm::vec3(-0.5f,  2.0f, 3.0f), SDL_Color{ 128, 128, 128, 255 } },
-                    Vertex3D{ glm::vec3( 0.5f,  2.0f, 3.0f), SDL_Color{ 128, 128, 128, 255 } },
+                    Vertex3D{ glm::vec3( 0.0f,  2.0f, 3.0f), SDL_Color{ 128, 128, 128, 255 } },
+                    Vertex3D{ glm::vec3( 0.5f, -1.0f, 3.0f), SDL_Color{ 128, 128, 128, 255 } },
+                    Vertex3D{ glm::vec3(-0.5f, -1.0f, 3.0f), SDL_Color{ 128, 128, 128, 255 } },
                 }
             }
         };
         
         sampler = goober;
-        BlitModel3D(target, camera, screen, floor_model);
+        BlitModel(target, camera, screen, floor_model);
         
         sampler = nullptr;
-        BlitModel3D(target, camera, screen, triangle_model);
-        BlitModel3D(target, camera, screen, spike_model);
+        BlitModel(target, camera, screen, triangle_model);
+        BlitModel(target, camera, screen, spike_model);
+        
+        // for (int i = 0; i < 100; ++i)
+        //     BlitModel(target, camera, screen, triangle_model);
         
         SDL_UpdateTexture(texture, nullptr, surface->pixels, surface->pitch);
         SDL_RenderCopy(renderer, texture, nullptr, nullptr);
