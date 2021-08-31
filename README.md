@@ -14,8 +14,6 @@ In order to compile, this project needs to link to three libraries:
 
 Additionally, this project uses CMake as a build system by default, though with the small code size it *should* be relatively simple to adapt it to your preferred build system.
 
-Please note that this project uses some **C++17** features, and so needs to be built with a C++ compiler that supports it.
-
 ## Code Structure
 
 This codebase is organised into four source files contained in the [source](./source) folder. [math.hpp](./source/math.hpp) contains a few utility functions for linear interpolation, color blending, and the like. [sdl_extra.hpp](./source/sdl_extra.hpp) has a few functions for reading/writing pixel date to and from an `SDL_Surface`. Finally, the crux of this repository, [renderer.hpp](./source/renderer.hpp) contains everything directly related to rendering 3D polygons, such as structs for vertices, triangles, and models, and a big `Renderer3D` class that contains the bulk of the rendering logic. Also, there is a [main.cpp](./source/main.cpp), but you can probably guess what that is for if you've programmed in C/C++ before :P.
