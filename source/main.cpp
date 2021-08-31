@@ -1,16 +1,5 @@
-#include <utility>
-#include <cmath>
-#include <optional>
-#include <array>
-#include <string>
-#include <vector>
-#include <filesystem>
-#include <fstream>
-
 #include <SDL2/SDL.h>
-#include <SDL2/SDL_image.h>
 #include <glm/glm.hpp>
-#include <glm/gtx/rotate_vector.hpp>
 
 #include "sdl_extra.hpp"
 #include "math.hpp"
@@ -58,16 +47,16 @@ int main(int, char**)
     
     // load models
     Model3D floor_model;
-    TryLoadModel("./assets/floor.txt", floor_model);
+    LoadModel("./assets/floor.txt", floor_model);
     
     Model3D triangle_model;
-    TryLoadModel("./assets/triangle.txt", triangle_model);
+    LoadModel("./assets/triangle.txt", triangle_model);
     
     Model3D spike_model;
-    TryLoadModel("./assets/spike.txt", spike_model);
+    LoadModel("./assets/spike.txt", spike_model);
     
     Model3D crate_model;
-    TryLoadModel("./assets/crate.txt", crate_model);
+    LoadModel("./assets/crate.txt", crate_model);
     
     // main loop
     for (bool running = true; running;)

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.0.0)
 project(smolsoft3d VERSION 1.0.0)
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 11)
 
 find_package(SDL2 CONFIG REQUIRED)
 find_package(sdl2-image CONFIG REQUIRED)

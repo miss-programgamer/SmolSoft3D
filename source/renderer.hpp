@@ -1,9 +1,14 @@
 #pragma once
-#include <filesystem>
-namespace fs = std::filesystem;
+#include <utility>
+#include <string>
+#include <fstream>
+#include <array>
+#include <vector>
 
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_image.h>
 #include <glm/glm.hpp>
+#include <glm/gtx/rotate_vector.hpp>
 
 #include "math.hpp"
 
@@ -110,9 +115,11 @@ struct Model3D
 
 
 // loads a 3D model from a text file
-inline std::optional<Model3D> LoadModel(const fs::path& filepath)
+inline bool LoadModel(const std::string& filepath, Model3D& out_model)
 {
-    if (std::ifstream file(filepath); file)
+    std::ifstream file(filepath);
+    
+    if (file)
     {
         Model3D model;
         
@@ -169,21 +176,12 @@ inline std::optional<Model3D> LoadModel(const fs::path& filepath)
         }
         
         // return our result
-        return model;
+        out_model = std::move(model);
+        return true;
     }
     else
     {
-        return std::nullopt;
-    }
-}
-
-
-// shorthand for attempting to load a model from a file and into a reference
-inline void TryLoadModel(const fs::path& filepath, Model3D& out_model)
-{
-    if (auto model = LoadModel(filepath); model)
-    {
-        out_model = std::move(model.value());
+        return false;
     }
 }
 
@@ -374,7 +372,9 @@ struct Renderer3D
             vert4.pos.y = vert2->pos.y;
             
             // draw top and bottom triangles (and do a bit of work to preserve winding order)
-            if (auto order = Triangle3D{ *vert1, *vert2, *vert3 }.GetWindingOrder(); order == 1)
+            auto order = Triangle3D{ *vert1, *vert2, *vert3 }.GetWindingOrder();
+            
+            if (order == 1)
             {
                 BlitTriangle(target, clip, { *vert1, *vert2, vert4 });
                 BlitTriangle(target, clip, { *vert2, *vert3, vert4 });

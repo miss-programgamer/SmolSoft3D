@@ -67,26 +67,14 @@ Screen screen{ (float)surface->w, (float)surface->h, 60.0f };
 
 ### Loading Models
 
-Then, before we can render anything, we need to load some models. To do so, we can use the `LoadModel` and/or `TryLoadModel` functions.
+Then, before we can render anything, we need to load some models. To do so, we can use the `LoadModel` function.
 
-The first function, `LoadModel`, takes a `std::filesystem::path` (abbreviated to `fs::path`) and returns a `std::optional<Model3D>`. If the function succeeds, the result contains a value and can be moved out into a variable.
-
-``` cpp
-Model3D floor_model;
-if (auto model = LoadModel("./assets/floor.txt"); model)
-{
-	floor_model = std::move(model.value());
-}
-```
-
-The second function, `TryLoadModel`, takes an `fs::path` and a `Model3D` reference. If the function succeeds, the given model reference will contain the loaded model, otherwise it silently fails.
+`LoadModel`, takes a `std::string` and a `Model3D` reference. If the function succeeds, the given model reference will contain the loaded model and return true, otherwise it returns false.
 
 ``` cpp
 Model3D floor_model;
-TryLoadModel("./assets/floor.txt", floor_model);
+LoadModel("./assets/floor.txt", floor_model);
 ```
-
-As you can see, `TryLoadModel` is effectively a shorthand for a `LoadModel` use case without any error handling.
 
 ### Drawing, aka Blitting
 
