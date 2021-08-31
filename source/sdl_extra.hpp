@@ -1,5 +1,9 @@
 #pragma once
+#include <algorithm>
+
 #include <SDL2/SDL.h>
+
+#include "math.hpp"
 
 
 // blits a single colored pixel onto the given surface at the given point
@@ -59,4 +63,17 @@ inline SDL_Color SDL_ReadPixel(SDL_Surface* surface, int x, int y)
     SDL_Color color;
     SDL_GetRGBA(pixel, surface->format, &color.r, &color.g, &color.b, &color.a);
     return color;
+}
+
+
+// samples a pixel in the given surface using normalized coordinates
+inline SDL_Color SDL_Sample(SDL_Surface* surface, float u, float v)
+{
+    auto x = (int)Lerp(0.0f, float(surface->w), u);
+    auto y = (int)Lerp(float(surface->h), 0.0f, v);
+    
+    if (x >= 0 && x <= surface->w && y >= 0 && y <= surface->h)
+    { return SDL_ReadPixel(surface, std::min(x, surface->w - 1), std::min(y, surface->h - 1)); }
+    else
+    { return { 0, 0, 0, 255 }; }
 }
